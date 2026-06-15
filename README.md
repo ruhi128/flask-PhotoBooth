@@ -7,9 +7,9 @@
    photobooth/
    ├── app.py (use app_photobooth.py)
    ├── templates/
-   │   └── photobooth.html (use photobooth_fixed.html)
+   │   └── photobooth.html
    └── static/
-       └── photobooth.css (use your existing CSS)
+       └── photobooth.css
    ```
 
 2. Run the application:
