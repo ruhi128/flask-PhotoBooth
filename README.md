@@ -5,7 +5,7 @@
 1. Create folder structure:
    ```
    photobooth/
-   ├── app.py (use app_photobooth.py)
+   ├── app.py 
    ├── templates/
    │   └── photobooth.html
    └── static/
