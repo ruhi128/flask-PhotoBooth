@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Photobooth</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='photobooth.css') }}">
+</head>
+<body>
+<div class="container">
+<header>
+<h1>📸 Photobooth</h1>
+<nav>
+<a href="/" class="nav-btn {% if not gallery_mode %}active{% endif %}">Camera</a>
+<a href="/gallery" class="nav-btn {% if gallery_mode %}active{% endif %}">
+Gallery ({{ photos|length if photos else 0 }})
+</a>
+</nav>
+</header>
+
+{% if not gallery_mode %}
+<main class="camera-section">
+<div class="camera-container">
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="preview" class="preview"></div>
+</div>
+
+<div class="controls">
+<button id="startBtn" class="btn btn-primary">📹 Start Camera</button>
+<button id="captureBtn" class="btn btn-capture" disabled>📸 Capture</button>
+<button id="retakeBtn" class="btn btn-secondary" style="display:none">🔄 Retake</button>
+<button id="saveBtn" class="btn btn-success" style="display:none">💾 Save</button>
+</div>
+
+<div class="filters">
+<h3>Filters</h3>
+<div class="filter-buttons">
+{% for f,l in [('none','Original'),('grayscale','B&W'),('sepia','Sepia'),('invert','Invert'),('blur','Blur'),('saturate','Vivid')] %}
+<button class="filter-btn {% if f=='none' %}active{% endif %}" data-filter="{{ f }}">{{ l }}</button>
+{% endfor %}
+</div>
+</div>
+
+<div id="message" class="message"></div>
+</main>
+
+{% else %}
+<main class="gallery-section">
+{% if photos %}
+<div class="gallery-grid">
+{% for p in photos %}
+<div class="gallery-item">
+<img src="data:image/png;base64,{{ p.data }}">
+<div class="gallery-overlay">
+<p class="timestamp">{{ p.timestamp }}</p>
+<div class="gallery-actions">
+<a href="/download/{{ p.id }}" class="btn-icon">⬇️</a>
+<button class="btn-icon delete-btn" data-id="{{ p.id }}">🗑️</button>
+</div>
+</div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+<div class="empty-icon">📷</div>
+<h2>No photos yet!</h2>
+<a href="/" class="btn btn-primary">Open Camera</a>
+</div>
+{% endif %}
+</main>
+{% endif %}
+</div>
+
+<script>
+const $=id=>document.getElementById(id),
+v=$('video'),cv=$('canvas'),pv=$('preview'),
+sb=$('startBtn'),cb=$('captureBtn'),rb=$('retakeBtn'),
+sv=$('saveBtn'),msg=$('message');
+
+let stream,filter='none',photo;
+
+// filter
+const applyFilter=(c,t)=>{
+ let d=c.getImageData(0,0,cv.width,cv.height),a=d.data;
+ for(let i=0;i<a.length;i+=4){
+  let r=a[i],g=a[i+1],b=a[i+2];
+  if(t=='grayscale') r=g=b=(r+g+b)/3;
+  else if(t=='sepia'){
+   a[i]=Math.min(255,r*.393+g*.769+b*.189);
+   a[i+1]=Math.min(255,r*.349+g*.686+b*.168);
+   a[i+2]=Math.min(255,r*.272+g*.534+b*.131);continue;
+  }
+  else if(t=='invert') r=255-r,g=255-g,b=255-b;
+  else if(t=='saturate'){
+   let max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
+   if(d){let m=(max+min)/2,f=2.2;r=m+(r-m)*f;g=m+(g-m)*f;b=m+(b-m)*f;}
+  }
+  a[i]=r;a[i+1]=g;a[i+2]=b;
+ }
+ c.putImageData(d,0,0);
+};
+
+// blur
+const blur=c=>{
+ let d=c.getImageData(0,0,cv.width,cv.height),a=d.data,w=cv.width,h=cv.height,b=new Uint8ClampedArray(a);
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+  let r=0,g=0,bv=0,cnt=0;
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+   let nx=x+dx,ny=y+dy;
+   if(nx>=0&&ny>=0&&nx<w&&ny<h){
+    let i=(ny*w+nx)*4;r+=a[i];g+=a[i+1];bv+=a[i+2];cnt++;
+   }
+  }
+  let i=(y*w+x)*4;b[i]=r/cnt;b[i+1]=g/cnt;b[i+2]=bv/cnt;
+ }
+ a.set(b);c.putImageData(d,0,0);
+};
+
+// filters UI
+document.querySelectorAll('.filter-btn').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('.filter-btn').forEach(x=>x.classList.remove('active'));
+ b.classList.add('active');filter=b.dataset.filter;
+ (pv.querySelector('img')||v).className=`filter-${filter}`;
+});
+
+// start camera
+sb&&(sb.onclick=async()=>{
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+  v.srcObject=stream;sb.style.display='none';cb.disabled=0;
+  show('Camera ready','success');
+ }catch{show('Allow camera','error')}
+});
+
+// capture + timestamp (BOTTOM RIGHT)
+cb&&(cb.onclick=()=>{
+ let c=cv.getContext('2d');
+ cv.width=v.videoWidth;cv.height=v.videoHeight;
+
+ c.save();c.translate(cv.width,0);c.scale(-1,1);
+ c.drawImage(v,0,0,cv.width,cv.height);c.restore();
+
+ filter=='blur'?blur(c):filter!='none'&&applyFilter(c,filter);
+
+ let t=new Date().toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});
+ c.font="20px Kalam";c.fillStyle="white";c.strokeStyle="black";c.lineWidth=2;
+
+ let w=c.measureText(t).width;
+ let x=cv.width-w-10,y=cv.height-10;
+
+ c.strokeText(t,x,y);
+ c.fillText(t,x,y);
+
+ photo=cv.toDataURL();
+ pv.innerHTML=`<img src="${photo}">`;
+ pv.style.display='block';v.style.display='none';
+ cb.style.display='none';rb.style.display=sv.style.display='inline-block';
+});
+
+// retake
+rb&&(rb.onclick=()=>{
+ pv.style.display='none';v.style.display='block';
+ cb.style.display='inline-block';rb.style.display=sv.style.display='none';
+});
+
+// save
+sv&&(sv.onclick=async()=>{
+ if(!photo)return;
+ try{
+  let r=await fetch('/save-photo',{method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({photo})});
+  let d=await r.json();
+  show(d.success?'Saved!':'Failed',d.success?'success':'error');
+ }catch{show('Error','error')}
+});
+
+// delete
+document.querySelectorAll('.delete-btn').forEach(b=>b.onclick=async e=>{
+ if(!confirm('Delete?'))return;
+ await fetch(`/delete/${e.target.dataset.id}`,{method:'POST'});
+ location.reload();
+});
+
+// message
+function show(t,type){
+ if(!msg)return;
+ msg.textContent=t;
+ msg.className=`message ${type}`;
+ msg.style.display='block';
+ setTimeout(()=>msg.style.display='none',2000);
+}
+
+window.onbeforeunload=()=>stream?.getTracks().forEach(t=>t.stop());
+</script>
+</body>
+</html>
